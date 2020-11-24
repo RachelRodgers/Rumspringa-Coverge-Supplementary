@@ -23,6 +23,7 @@ sampleTypeLUT <- metadata %>%
   deframe()
 
 #----- Fxns -----#
+
 GetCoverageAtPosition <- function(position, coverageRangeList) {
   for (pos_idx in 1:length(coverageRangeList)) {
     if (position %in% coverageRangeList[[pos_idx]]) {
@@ -44,9 +45,9 @@ sampleNames <- map_chr(.x = bgFileList,
                        .f = ~ str_extract(string = .x, pattern = "^[:digit:]+"))
 names(bgFileList) <- sampleNames
 
-#----- Build Coverage DF/Sample -----#
+#----- Build Coverage Map/Sample -----#
 
-variantCovDFList <- vector(mode = "list", length = length(bgFileList))
+covMapList <- vector(mode = "list", length = length(bgFileList))
 
 # For each file, read in bedgraph, generate coverageRangeList, then build
 #   DF of sample name, sample type, position, and coverage
@@ -70,26 +71,41 @@ for (i in 1:length(bgFileList)) {
     names(coverageRangeList)[j] <- bedgraphDT[j, "value"]
   }
   
-  covMap <- map_chr(variants, GetCoverageAtPosition, 
-                    coverageRangeList = coverageRangeList)
-  
-  sampleVariantDF <- data.frame("sample" = currSampleName,
-                                "variant" = variants)
-  sampleVariantDF <- mutate(sampleVariantDF,
-                            "coverage" = covMap[variant])
-  
-  variantCovDFList[[i]] <- sampleVariantDF
-  names(variantCovDFList)[i] <- currSampleName
+  covMapList[[i]] <- coverageRangeList
+  names(covMapList)[i] <- currSampleName
   
 }
 
+#----- Populate coverageDFList -----#
+
+coverageDFList <- vector(mode = "list", length = length(covMapList))
+
+for (i in 1:length(covMapList)) {
+  
+  currSampleName <- names(covMapList)[i]
+  
+  coverage <- map_chr(variants, GetCoverageAtPosition,
+                      coverageRangeList = covMapList[[currSampleName]])
+  
+  coverageDF <- coverage %>% 
+    enframe(name = "position", value = "coverage") %>% 
+    mutate(sample = currSampleName) %>% 
+    select(sample, position, coverage)
+  
+  coverageDFList[[i]] <- coverageDF
+  names(coverageDFList)[i] <- currSampleName
+  
+}
+
+#----- Merge & Pivot into Variant Coverage Table -----#
+
 variantCovMerged <- base::Reduce(f = function(df1, df2) {rbind(df1, df2)}, 
-                                 x = variantCovDFList)
+                                 x = coverageDFList)
 
 variantCovWide <- variantCovMerged %>% 
   mutate("sampleType" = sampleTypeLUT[sample]) %>% 
   pivot_wider(id_cols = c(sample, sampleType),
-              names_from = variant,
+              names_from = position,
               values_from = coverage)
 
 # arrange rows
